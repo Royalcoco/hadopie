@@ -1,0 +1,125 @@
+import os
+import cv2
+import numpy as np
+from cryptography.fernet import Fernet
+import shutil
+from pydub import AudioSegment
+
+def add_blur_to_frame(frame):
+    return cv2.GaussianBlur(frame, (21, 21), 0)
+
+def add_warning_to_frame(frame, warning_text="ACCESS RESTRICTED"):
+    height, width, _ = frame.shape
+    overlay = frame.copy()
+    cv2.putText(overlay, warning_text, (10, height // 2), cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 0, 255), 4)
+    alpha = 0.4
+    return cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0)
+
+def encrypt_data(data, key):
+    f = Fernet(key)
+    encrypted_data = f.encrypt(data)
+    return encrypted_data
+
+def decrypt_data(encrypted_data, key):
+    f = Fernet(key)
+    decrypted_data = f.decrypt(encrypted_data)
+    return decrypted_data
+
+def save_frame(frame, output_path):
+    cv2.imwrite(output_path, frame)
+
+def process_files(input_folder, output_folder, key_folder):
+    if not os.path.exists(output_folder):
+        os.makedirs(output_folder)
+    if not os.path.exists(key_folder):
+        os.makedirs(key_folder)
+
+    key = Fernet.generate_key()
+    key_path = os.path.join(key_folder, "encryption_key.key")
+    with open(key_path, 'wb') as key_file:
+        key_file.write(key)
+
+    for file in os.listdir(input_folder):
+        file_path = os.path.join(input_folder, file)
+        if file.lower().endswith(('.mp4', '.avi', '.mov')):
+            process_video(file_path, output_folder, key_folder, key)
+        elif file.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.gif')):
+            process_image(file_path, output_folder, key_folder, key)
+        elif file.lower().endswith('.mp3'):
+            process_audio(file_path, output_folder, key_folder, key)
+
+def process_video(video_path, output_folder, key_folder, key):
+    cap = cv2.VideoCapture(video_path)
+    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    fps = cap.get(cv2.CAP_PROP_FPS)
+
+    fourcc = cv2.VideoWriter_fourcc(*'XVID')
+    output_video_path = os.path.join(output_folder, os.path.basename(video_path))
+    out = cv2.VideoWriter(output_video_path, fourcc, fps, (width, height))
+
+    encrypted_frames = []
+    for i in range(frame_count):
+        ret, frame = cap.read()
+        if not ret:
+            break
+
+        if i % 10 == 0:  # Encrypt every 10th frame
+            frame = add_blur_to_frame(frame)
+            encrypted_frame = encrypt_data(frame.tobytes(), key)
+            encrypted_frames.append((i, encrypted_frame))
+            frame = add_warning_to_frame(frame)
+
+        out.write(frame)
+
+    cap.release()
+    out.release()
+
+    encrypted_frames_path = os.path.join(key_folder, f"{os.path.basename(video_path)}_encrypted_frames.npy")
+    np.save(encrypted_frames_path, encrypted_frames)
+
+def process_image(image_path, output_folder, key_folder, key):
+    frame = cv2.imread(image_path)
+    frame = add_blur_to_frame(frame)
+    encrypted_frame = encrypt_data(frame.tobytes(), key)
+
+    encrypted_frame_path = os.path.join(key_folder, f"{os.path.basename(image_path)}.enc")
+    with open(encrypted_frame_path, 'wb') as enc_file:
+        enc_file.write(encrypted_frame)
+
+    warning_frame = add_warning_to_frame(frame)
+    output_image_path = os.path.join(output_folder, os.path.basename(image_path))
+    save_frame(warning_frame, output_image_path)
+
+def process_audio(audio_path, output_folder, key_folder, key):
+    audio = AudioSegment.from_file(audio_path)
+    audio_data = audio.raw_data
+    encrypted_audio_data = encrypt_data(audio_data, key)
+
+    encrypted_audio_path = os.path.join(key_folder, f"{os.path.basename(audio_path)}.enc")
+    with open(encrypted_audio_path, 'wb') as enc_file:
+        enc_file.write(encrypted_audio_data)
+
+    # Save a modified version of the audio with a warning sound (for illustration)
+    warning_audio = AudioSegment.silent(duration=1000) + audio + AudioSegment.silent(duration=1000)
+    output_audio_path = os.path.join(output_folder, os.path.basename(audio_path))
+    warning_audio.export(output_audio_path, format="mp3")
+
+def decrypt_files(input_folder, output_folder, key_folder):
+    if not os.path.exists(output_folder):
+        os.makedirs(output_folder)
+
+    key_path = os.path.join(key_folder, "encryption_key.key")
+    if not os.path.exists(key_path):
+        return
+
+    with open(key_path, 'rb') as key_file:
+        key = key_file.read()
+
+    for file in os.listdir(input_folder):
+        file_path = os.path.join(input_folder, file)
+        if file.lower().endswith(('.mp4', '.avi', '.mov')):
+            decrypt_video(file_path, output_folder, key_folder, key)
+        elif file.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.gif')):
+            decrypt_image(file_path, output_folder, key_folder,
