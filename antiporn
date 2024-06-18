@@ -1,0 +1,79 @@
+import os
+import cv2
+import numpy as np
+from cryptography.fernet import Fernet
+import shutil
+
+def add_noise_to_frame(frame):
+    noise = np.random.normal(0, 25, frame.shape).astype(np.uint8)
+    return cv2.add(frame, noise)
+
+def encrypt_frame(frame, key):
+    f = Fernet(key)
+    encrypted_data = f.encrypt(frame.tobytes())
+    return encrypted_data
+
+def decrypt_frame(encrypted_data, key, shape):
+    f = Fernet(key)
+    decrypted_data = f.decrypt(encrypted_data)
+    frame = np.frombuffer(decrypted_data, dtype=np.uint8).reshape(shape)
+    return frame
+
+def process_videos(input_folder, output_folder, key_folder):
+    if not os.path.exists(output_folder):
+        os.makedirs(output_folder)
+    if not os.path.exists(key_folder):
+        os.makedirs(key_folder)
+    
+    for video_file in os.listdir(input_folder):
+        video_path = os.path.join(input_folder, video_file)
+        cap = cv2.VideoCapture(video_path)
+        frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        fps = cap.get(cv2.CAP_PROP_FPS)
+
+        key = Fernet.generate_key()
+        key_path = os.path.join(key_folder, f"{video_file}.key")
+        with open(key_path, 'wb') as key_file:
+            key_file.write(key)
+
+        fourcc = cv2.VideoWriter_fourcc(*'XVID')
+        output_video_path = os.path.join(output_folder, video_file)
+        out = cv2.VideoWriter(output_video_path, fourcc, fps, (width, height))
+
+        encrypted_frames = []
+        for i in range(frame_count):
+            ret, frame = cap.read()
+            if not ret:
+                break
+
+            frame = add_noise_to_frame(frame)
+            if i % 10 == 0:  # Encrypt every 10th frame
+                encrypted_frame = encrypt_frame(frame, key)
+                encrypted_frames.append((i, encrypted_frame))
+                frame = np.zeros_like(frame)  # Replace encrypted frame with blank frame
+
+            out.write(frame)
+
+        cap.release()
+        out.release()
+
+        encrypted_frames_path = os.path.join(key_folder, f"{video_file}_encrypted_frames.npy")
+        np.save(encrypted_frames_path, encrypted_frames)
+
+def main():
+    input_folder = 'input_videos'
+    output_folder = 'output_videos'
+    key_folder = 'keys'
+
+    # Clean up previous runs
+    if os.path.exists(output_folder):
+        shutil.rmtree(output_folder)
+    if os.path.exists(key_folder):
+        shutil.rmtree(key_folder)
+
+    process_videos(input_folder, output_folder, key_folder)
+
+if __name__ == "__main__":
+    main()
