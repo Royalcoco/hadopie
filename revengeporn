@@ -1,0 +1,93 @@
+import os
+import cv2
+import numpy as np
+from cryptography.fernet import Fernet
+import shutil
+
+def add_blur_to_frame(frame):
+    return cv2.GaussianBlur(frame, (21, 21), 0)
+
+def add_warning_to_frame(frame, warning_text="ACCESS RESTRICTED"):
+    height, width, _ = frame.shape
+    overlay = frame.copy()
+    cv2.putText(overlay, warning_text, (10, height // 2), cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 0, 255), 4)
+    alpha = 0.4
+    return cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0)
+
+def encrypt_frame(frame, key):
+    f = Fernet(key)
+    encrypted_data = f.encrypt(frame.tobytes())
+    return encrypted_data
+
+def decrypt_frame(encrypted_data, key, shape):
+    f = Fernet(key)
+    decrypted_data = f.decrypt(encrypted_data)
+    frame = np.frombuffer(decrypted_data, dtype=np.uint8).reshape(shape)
+    return frame
+
+def save_frame(frame, output_path):
+    cv2.imwrite(output_path, frame)
+
+def process_videos(input_folder, output_folder, key_folder, password):
+    if not os.path.exists(output_folder):
+        os.makedirs(output_folder)
+    if not os.path.exists(key_folder):
+        os.makedirs(key_folder)
+    
+    key = Fernet.generate_key()
+    fernet = Fernet(key)
+    key_path = os.path.join(key_folder, "encryption_key.key")
+    with open(key_path, 'wb') as key_file:
+        key_file.write(key)
+
+    for video_file in os.listdir(input_folder):
+        video_path = os.path.join(input_folder, video_file)
+        cap = cv2.VideoCapture(video_path)
+        frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        fps = cap.get(cv2.CAP_PROP_FPS)
+
+        fourcc = cv2.VideoWriter_fourcc(*'XVID')
+        output_video_path = os.path.join(output_folder, video_file)
+        out = cv2.VideoWriter(output_video_path, fourcc, fps, (width, height))
+
+        encrypted_frames = []
+        for i in range(frame_count):
+            ret, frame = cap.read()
+            if not ret:
+                break
+
+            if i % 10 == 0:  # Every 10th frame
+                frame = add_blur_to_frame(frame)
+                encrypted_frame = encrypt_frame(frame, key)
+                encrypted_frames.append((i, encrypted_frame))
+                frame = add_warning_to_frame(frame)
+            
+            frame_path = os.path.join(output_folder, f"{video_file}_frame_{i}.png")
+            save_frame(frame, frame_path)
+
+            out.write(frame)
+
+        cap.release()
+        out.release()
+
+        encrypted_frames_path = os.path.join(key_folder, f"{video_file}_encrypted_frames.npy")
+        np.save(encrypted_frames_path, encrypted_frames)
+
+def main():
+    input_folder = 'input_videos'
+    output_folder = 'output_videos'
+    key_folder = 'keys'
+    password = 'your_site_specific_password'  # Replace with your password
+
+    # Clean up previous runs
+    if os.path.exists(output_folder):
+        shutil.rmtree(output_folder)
+    if os.path.exists(key_folder):
+        shutil.rmtree(key_folder)
+
+    process_videos(input_folder, output_folder, key_folder, password)
+
+if __name__ == "__main__":
+    main()
