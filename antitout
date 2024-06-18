@@ -122,4 +122,82 @@ def decrypt_files(input_folder, output_folder, key_folder):
         if file.lower().endswith(('.mp4', '.avi', '.mov')):
             decrypt_video(file_path, output_folder, key_folder, key)
         elif file.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.gif')):
-            decrypt_image(file_path, output_folder, key_folder,
+            decrypt_image(file_path, output_folder, key_folder, key)
+        elif file.lower().endswith('.mp3'):
+            decrypt_audio(file_path, output_folder, key_folder, key)
+
+def decrypt_video(video_path, output_folder, key_folder, key):
+    cap = cv2.VideoCapture(video_path)
+    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    fps = cap.get(cv2.CAP_PROP_FPS)
+
+    fourcc = cv2.VideoWriter_fourcc(*'XVID')
+    output_video_path = os.path.join(output_folder, f"decrypted_{os.path.basename(video_path)}")
+    out = cv2.VideoWriter(output_video_path, fourcc, fps, (width, height))
+
+    encrypted_frames_path = os.path.join(key_folder, f"{os.path.basename(video_path)}_encrypted_frames.npy")
+    encrypted_frames = np.load(encrypted_frames_path, allow_pickle=True)
+
+    frame_index = 0
+    for i in range(frame_count):
+        ret, frame = cap.read()
+        if not ret:
+            break
+
+        if (i, frame_index) in encrypted_frames[:, 0]:
+            encrypted_frame = encrypted_frames[encrypted_frames[:, 0] == (i, frame_index)][0][1]
+            frame = decrypt_data(encrypted_frame, key)
+            frame = np.frombuffer(frame, dtype=np.uint8).reshape((height, width, 3))
+            frame_index += 1
+
+        out.write(frame)
+
+    cap.release()
+    out.release()
+
+def decrypt_image(image_path, output_folder, key_folder, key):
+    encrypted_frame_path = os.path.join(key_folder, f"{os.path.basename(image_path)}.enc")
+    with open(encrypted_frame_path, 'rb') as enc_file:
+        encrypted_frame = enc_file.read()
+
+    decrypted_frame = decrypt_data(encrypted_frame, key)
+    frame = np.frombuffer(decrypted_frame, dtype=np.uint8).reshape((height, width, 3))
+
+    output_image_path = os.path.join(output_folder, f"decrypted_{os.path.basename(image_path)}")
+    save_frame(frame, output_image_path)
+
+def decrypt_audio(audio_path, output_folder, key_folder, key):
+    encrypted_audio_path = os.path.join(key_folder, f"{os.path.basename(audio_path)}.enc")
+    with open(encrypted_audio_path, 'rb') as enc_file:
+        encrypted_audio_data = enc_file.read()
+
+    decrypted_audio_data = decrypt_data(encrypted_audio_data, key)
+    audio = AudioSegment(data=decrypted_audio_data, sample_width=2, frame_rate=44100, channels=2)
+
+    output_audio_path = os.path.join(output_folder, f"decrypted_{os.path.basename(audio_path)}")
+    audio.export(output_audio_path, format="mp3")
+
+def main():
+    input_folder = 'input_files'
+    output_folder = 'output_files'
+    key_folder = 'keys'
+    decrypted_output_folder = 'decrypted_files'
+
+    # Clean up previous runs
+    if os.path.exists(output_folder):
+        shutil.rmtree(output_folder)
+    if os.path.exists(key_folder):
+        shutil.rmtree(key_folder)
+    if os.path.exists(decrypted_output_folder):
+        shutil.rmtree(decrypted_output_folder)
+
+    process_files(input_folder, output_folder, key_folder)
+    # Simulate upload
+    decrypt_files(output_folder, decrypted_output_folder, key_folder)
+    # Clean up keys after upload
+    shutil.rmtree(key_folder)
+
+if __name__ == "__main__":
+    main()
